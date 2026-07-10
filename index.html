@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>In-Pro Check-In</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --ink:#1a1d16;
+    --paper:#eef0ea;
+    --panel:#ffffff;
+    --olive:#39452c;
+    --olive-deep:#2a3320;
+    --line:#d5d9cc;
+    --present:#20713d;
+    --present-bg:#e3f1e7;
+    --out:#a3671a;
+    --out-bg:#f7ecd9;
+    --excl:#8a8f80;
+    --excl-bg:#e8eae2;
+    --danger:#a63a2a;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono","Consolas",monospace;
+    --cond:"Arial Narrow","Helvetica Neue Condensed","Roboto Condensed",Arial,sans-serif;
+    --body:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--body);background:var(--paper);color:var(--ink);font-size:15px}
+  button{font-family:inherit;cursor:pointer}
+  input,select{font-family:inherit}
+
+  /* ---------- Parade state strip (signature) ---------- */
+  header{background:var(--olive);color:#fff;position:sticky;top:0;z-index:50;border-bottom:4px solid var(--olive-deep)}
+  .strip{display:flex;align-items:stretch;gap:0;max-width:1100px;margin:0 auto;padding:0 16px}
+  .strip .brand{display:flex;flex-direction:column;justify-content:center;padding:10px 18px 10px 0;border-right:1px solid rgba(255,255,255,.25)}
+  .brand h1{font-family:var(--cond);font-size:20px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;line-height:1.1}
+  .brand span{font-size:11px;opacity:.75;letter-spacing:.12em;text-transform:uppercase}
+  .stat{flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:8px 6px}
+  .stat b{font-family:var(--mono);font-size:34px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+  .stat small{font-size:10px;letter-spacing:.14em;text-transform:uppercase;opacity:.8;margin-top:4px}
+  .stat.present b{color:#9fd8ae}
+  .stat.outstanding b{color:#f0c580}
+  #clock{font-family:var(--mono);font-size:13px;opacity:.85;align-self:center;padding-left:14px;border-left:1px solid rgba(255,255,255,.25)}
+
+  /* ---------- Tabs ---------- */
+  nav{background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:70px;z-index:40}
+  .tabs{max-width:1100px;margin:0 auto;display:flex;gap:2px;padding:0 16px;overflow-x:auto}
+  .tabs button{background:none;border:none;border-bottom:3px solid transparent;padding:12px 16px;font-size:14px;font-weight:600;color:#5c6152;white-space:nowrap}
+  .tabs button.active{color:var(--olive);border-bottom-color:var(--olive)}
+  .tabs button:focus-visible{outline:2px solid var(--olive);outline-offset:-2px}
+
+  main{max-width:1100px;margin:0 auto;padding:20px 16px 80px}
+  .view{display:none}
+  .view.active{display:block}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:20px;margin-bottom:16px}
+  .card h2{font-family:var(--cond);text-transform:uppercase;letter-spacing:.05em;font-size:17px;margin-bottom:12px;color:var(--olive-deep)}
+  .muted{color:#6b7060;font-size:13px}
+  .btn{background:var(--olive);color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:14px;font-weight:600}
+  .btn:hover{background:var(--olive-deep)}
+  .btn.secondary{background:#fff;color:var(--olive);border:1.5px solid var(--olive)}
+  .btn.small{padding:6px 12px;font-size:13px}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  .vh{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)}
+
+  /* ---------- Setup ---------- */
+  .drop{border:2px dashed var(--line);border-radius:8px;padding:34px;text-align:center;background:#fafbf7}
+  .drop.drag{border-color:var(--olive);background:#f0f4ea}
+  .maprow{display:grid;grid-template-columns:150px 1fr;gap:10px;align-items:center;margin-bottom:8px}
+  .maprow label{font-weight:600;font-size:13px}
+  .maprow select{padding:8px;border:1px solid var(--line);border-radius:6px;width:100%;max-width:320px}
+  .pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600}
+  .pill.req{background:var(--out-bg);color:var(--out)}
+  .pill.opt{background:var(--excl-bg);color:var(--excl)}
+
+  /* ---------- Check-in ---------- */
+  #search{width:100%;font-size:22px;padding:16px 18px;border:2px solid var(--olive);border-radius:8px;font-family:var(--mono)}
+  #search:focus{outline:3px solid rgba(57,69,44,.3)}
+  .hint{font-size:12px;color:#6b7060;margin-top:6px}
+  .results{margin-top:14px}
+  .person{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin-bottom:8px}
+  .person .who{flex:1;min-width:0}
+  .person .nm{font-weight:700;font-size:17px}
+  .person .meta{font-family:var(--mono);font-size:13px;color:#585d4e;margin-top:2px}
+  .status{font-size:12px;font-weight:700;padding:4px 10px;border-radius:99px;white-space:nowrap}
+  .status.in{background:var(--present-bg);color:var(--present)}
+  .status.out{background:var(--out-bg);color:var(--out)}
+  .status.ex{background:var(--excl-bg);color:#5c6152}
+  .checkbtn{background:var(--present);color:#fff;border:none;border-radius:8px;padding:14px 22px;font-size:16px;font-weight:700;min-width:130px}
+  .checkbtn:hover{background:#195a30}
+  .undobtn{background:#fff;color:var(--danger);border:1.5px solid var(--danger);border-radius:6px;padding:8px 14px;font-size:13px;font-weight:600}
+  .flash{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:12px 22px;border-radius:8px;font-weight:600;z-index:99;box-shadow:0 6px 20px rgba(0,0,0,.25);opacity:0;transition:opacity .2s}
+  .flash.show{opacity:1}
+  .flash.good{background:var(--present)}
+  .flash.bad{background:var(--danger)}
+
+  /* ---------- Tables ---------- */
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{font-family:var(--cond);text-transform:uppercase;letter-spacing:.05em;font-size:12px;text-align:left;padding:8px 10px;border-bottom:2px solid var(--olive);color:var(--olive-deep)}
+  td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+  td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  tr.done td{color:#8a8f80}
+  .bar{height:8px;background:var(--line);border-radius:99px;overflow:hidden;min-width:80px}
+  .bar i{display:block;height:100%;background:var(--present)}
+  .filterrow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+  .filterrow select,.filterrow input{padding:8px;border:1px solid var(--line);border-radius:6px;font-size:14px}
+
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+
+  @media (max-width:640px){
+    .stat b{font-size:24px}
+    .brand h1{font-size:16px}
+    #clock{display:none}
+    nav{top:62px}
+  }
+  @media print{
+    header,nav,.toolbar,.filterrow,.no-print{display:none!important}
+    body{background:#fff}
+    .card{border:none;padding:0}
+    main{padding:0;max-width:none}
+  }
+  @media (prefers-reduced-motion:reduce){ .flash{transition:none} }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="strip">
+    <div class="brand"><h1>In-Pro Check-In</h1><span id="unitLabel">Manpower Branch</span></div>
+    <div class="stat present"><b id="sPresent">0</b><small>Present</small></div>
+    <div class="stat outstanding"><b id="sOut">0</b><small>Outstanding</small></div>
+    <div class="stat"><b id="sExpected">0</b><small>Expected</small></div>
+    <div class="stat"><b id="sExcluded">0</b><small>Excused</small></div>
+    <div id="clock">--:--</div>
+  </div>
+</header>
+
+<nav><div class="tabs">
+  <button data-view="setup" class="active">Setup</button>
+  <button data-view="checkin" disabled>Check-In</button>
+  <button data-view="dashboard" disabled>Dashboard</button>
+  <button data-view="outstanding" disabled>Outstanding</button>
+  <button data-view="roll" disabled>Full Roll</button>
+</div></nav>
+
+<main>
+
+<!-- ============ SETUP ============ -->
+<section class="view active" id="view-setup">
+  <div class="card">
+    <h2>1 · Load nominal roll</h2>
+    <p class="muted" style="margin-bottom:12px">Load your battalion nominal roll (.xlsx or .csv). Everything stays on this computer — nothing is uploaded anywhere.</p>
+    <div class="drop" id="drop">
+      <p style="font-weight:700;font-size:16px;margin-bottom:6px">Drop your file here</p>
+      <p class="muted" style="margin-bottom:14px">or</p>
+      <label class="btn" for="file" style="display:inline-block">Choose file</label>
+      <input type="file" id="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/comma-separated-values,text/plain" class="vh">
+      <p class="muted" id="xlsxNote" style="margin-top:12px"></p>
+      <p class="muted" style="margin-top:8px">On a phone: if tapping does nothing, you're likely inside WhatsApp/Telegram's built-in viewer — use its ⋯ menu → <b>Open in browser</b> (Chrome/Safari), then try again.</p>
+    </div>
+    <details style="margin-top:14px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px;color:var(--olive)">File picker still not working? Paste your data instead</summary>
+      <p class="muted" style="margin:10px 0 8px">In Excel/Sheets, select the roll (with headers), copy, and paste below — pasted cells or CSV text both work.</p>
+      <textarea id="pasteArea" rows="6" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:6px;font-family:var(--mono);font-size:13px" placeholder="Rank,Name,Coy,Status&#10;3SG,TAN AH KOW,ALPHA,&#10;..."></textarea>
+      <button class="btn small" id="pasteBtn" style="margin-top:8px">Load pasted data</button>
+    </details>
+  </div>
+
+  <div class="card" id="coyPickCard" style="display:none">
+    <h2>2 · Which company is this device covering?</h2>
+    <p class="muted" style="margin-bottom:12px">Battalion template detected. Select the company (or companies) this phone/laptop will check in. Each commander should select only their own company.</p>
+    <div id="coyPicks" style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px"></div>
+    <button class="btn" id="coyLoadBtn">Load selected</button>
+  </div>
+
+  <div class="card" id="mapCard" style="display:none">
+    <h2>2 · Match your columns</h2>
+    <p class="muted" style="margin-bottom:14px">Tell the tool which column is which. It has taken a best guess — check and correct.</p>
+    <div id="mapRows"></div>
+    <div style="margin-top:14px;padding:12px;background:#fafbf7;border:1px solid var(--line);border-radius:6px">
+      <p style="font-size:13px;font-weight:600;margin-bottom:6px">Excused keywords</p>
+      <p class="muted" style="margin-bottom:8px">Anyone whose Status contains these words is excluded from expected strength (comma-separated):</p>
+      <input type="text" id="exclWords" value="defer, disrupt, excuse, mc, overseas, exempt" style="width:100%;padding:8px;border:1px solid var(--line);border-radius:6px">
+    </div>
+    <div style="margin-top:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="btn" id="buildBtn">Build check-in list</button>
+      <span class="muted" id="rowCount"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Resume a previous session</h2>
+    <p class="muted" style="margin-bottom:10px">If you saved progress earlier, load the .json file to continue where you left off.</p>
+    <label class="btn secondary" for="resumeFile" style="display:inline-block">Load saved session</label>
+    <input type="file" id="resumeFile" accept=".json,application/json" class="vh">
+  </div>
+</section>
+
+<!-- ============ CHECK-IN ============ -->
+<section class="view" id="view-checkin">
+  <input type="text" id="search" placeholder="Type a name (or NRIC if on roll)…" autocomplete="off">
+  <p class="hint">Press <b>Enter</b> to check in the top match. Results appear as you type.</p>
+  <div class="results" id="results"></div>
+
+  <div class="card no-print" style="margin-top:24px">
+    <h2>Walk-in not on the roll?</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input type="text" id="wRank" placeholder="Rank" style="padding:9px;border:1px solid var(--line);border-radius:6px;width:90px">
+      <input type="text" id="wName" placeholder="Full name" style="padding:9px;border:1px solid var(--line);border-radius:6px;flex:1;min-width:160px">
+      <input type="text" id="wNric" placeholder="NRIC (masked ok)" style="padding:9px;border:1px solid var(--line);border-radius:6px;width:150px">
+      <input type="text" id="wCoy" placeholder="Coy" style="padding:9px;border:1px solid var(--line);border-radius:6px;width:90px">
+      <button class="btn" id="walkBtn">Add &amp; check in</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ DASHBOARD ============ -->
+<section class="view" id="view-dashboard">
+  <div class="toolbar">
+    <button class="btn" id="exportBtn">Export results</button>
+    <button class="btn secondary" id="saveBtn">Save session (.json)</button>
+    <label class="btn secondary" for="mergeFile" style="display:inline-block">Merge company sessions</label>
+    <input type="file" id="mergeFile" accept=".json,application/json" multiple class="vh">
+    <button class="btn secondary" onclick="window.print()">Print</button>
+  </div>
+  <div class="card"><h2>By company</h2><div id="coyTable"></div></div>
+</section>
+
+<!-- ============ OUTSTANDING ============ -->
+<section class="view" id="view-outstanding">
+  <div class="toolbar">
+    <button class="btn secondary" onclick="window.print()">Print chase list</button>
+  </div>
+  <div class="filterrow">
+    <select id="outCoy"><option value="">All companies</option></select>
+  </div>
+  <div class="card"><h2 id="outTitle">Outstanding</h2><div id="outTable"></div></div>
+</section>
+
+<!-- ============ FULL ROLL ============ -->
+<section class="view" id="view-roll">
+  <div class="filterrow">
+    <input type="text" id="rollSearch" placeholder="Filter by name / NRIC…" style="flex:1;min-width:180px">
+    <select id="rollFilter">
+      <option value="">Everyone</option>
+      <option value="present">Present</option>
+      <option value="outstanding">Outstanding</option>
+      <option value="excluded">Excused</option>
+    </select>
+  </div>
+  <div class="card"><div id="rollTable"></div></div>
+</section>
+
+</main>
+
+<div class="flash" id="flash"></div>
+
+<script>
+'use strict';
+// ---------------- State ----------------
+let roster = [];            // {id, rank, name, nric, coy, statusRaw, excluded, present, time, walkIn}
+let headers = [];
+let rawRows = [];
+const $ = id => document.getElementById(id);
+
+// ---------------- Utilities ----------------
+function flash(msg, good){
+  const f = $('flash');
+  f.textContent = msg;
+  f.className = 'flash show ' + (good===false ? 'bad' : good ? 'good' : '');
+  clearTimeout(f._t);
+  f._t = setTimeout(()=>f.classList.remove('show'), 2200);
+}
+function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function last4(nric){ const s = String(nric||'').replace(/\s/g,''); return s.slice(-4).toUpperCase(); }
+
+// ---------------- Clock ----------------
+function tick(){
+  const n = new Date();
+  $('clock').textContent = n.toLocaleTimeString('en-SG', {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+}
+setInterval(tick, 1000); tick();
+
+// ---------------- File loading ----------------
+const hasXLSX = typeof XLSX !== 'undefined';
+if(!hasXLSX) $('xlsxNote').textContent = 'No internet detected on first load — .csv files only. (Open this page once with internet to enable .xlsx.)';
+
+const drop = $('drop');
+drop.addEventListener('dragover', e=>{e.preventDefault(); drop.classList.add('drag');});
+drop.addEventListener('dragleave', ()=>drop.classList.remove('drag'));
+drop.addEventListener('drop', e=>{e.preventDefault(); drop.classList.remove('drag'); if(e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]);});
+$('file').addEventListener('change', e=>{ if(e.target.files[0]) readFile(e.target.files[0]); });
+
+function readFile(file){
+  const ext = file.name.split('.').pop().toLowerCase();
+  const reader = new FileReader();
+  if(ext==='csv'){
+    reader.onload = ()=>{ try{ parseCSV(reader.result); }catch(err){ flash('Could not read that CSV: '+err.message, false); } };
+    reader.readAsText(file);
+  } else if(hasXLSX){
+    reader.onload = ()=>{
+      try{
+        const wb = XLSX.read(new Uint8Array(reader.result), {type:'array'});
+        ingestWorkbook(wb);
+      }catch(err){ flash('Could not read that Excel file: '+err.message, false); }
+    };
+    reader.readAsArrayBuffer(file);
+  } else {
+    flash('Excel reading needs one internet load first — please save your roll as .csv instead.', false);
+  }
+}
+
+// Paste fallback — accepts CSV or tab-separated (straight from Excel/Sheets copy)
+$('pasteBtn').onclick = ()=>{
+  const text = $('pasteArea').value.trim();
+  if(!text){ flash('Paste your data into the box first.', false); return; }
+  try{
+    if(text.includes('\t')){
+      // tab-separated (copied cells)
+      const rows = text.split(/\r?\n/).map(l=>l.split('\t')).filter(r=>r.some(v=>v.trim()!==''));
+      ingestRows(rows);
+    } else {
+      parseCSV(text);
+    }
+  }catch(err){ flash('Could not read the pasted data: '+err.message, false); }
+};
+
+function parseCSV(text){
+  // Small RFC-4180-ish parser (handles quoted commas and newlines)
+  const rows=[]; let row=[], cell='', inQ=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQ){
+      if(c==='"'){ if(text[i+1]==='"'){cell+='"';i++;} else inQ=false; }
+      else cell+=c;
+    } else {
+      if(c==='"') inQ=true;
+      else if(c===','){ row.push(cell); cell=''; }
+      else if(c==='\n'||c==='\r'){ if(c==='\r'&&text[i+1]==='\n')i++; row.push(cell); rows.push(row); row=[]; cell=''; }
+      else cell+=c;
+    }
+  }
+  if(cell!==''||row.length){ row.push(cell); rows.push(row); }
+  ingestRows(rows.filter(r=>r.some(v=>String(v).trim()!=='')));
+}
+
+function ingestRows(rows){
+  if(!rows.length){ flash('That file looks empty.', false); return; }
+  headers = rows[0].map(h=>String(h).trim());
+  rawRows = rows.slice(1).filter(r=>r.some(v=>String(v).trim()!==''));
+  buildMapper();
+  $('mapCard').style.display='block';
+  $('rowCount').textContent = rawRows.length + ' rows loaded';
+  $('mapCard').scrollIntoView({behavior:'smooth'});
+}
+
+// ---------------- Battalion NR template (multi-sheet) ----------------
+// Detects sheets laid out like: title row(s), then S/N | RANK | NAME | APPOINTMENT | Disrupting/Deferring | REMARKS
+function findHeaderRow(rows){
+  for(let i=0;i<Math.min(rows.length,8);i++){
+    const cells = rows[i].map(c=>String(c).trim().toUpperCase());
+    if(cells.some(c=>c==='NAME') && cells.some(c=>c==='RANK')) return i;
+  }
+  return -1;
+}
+let pendingSheets = [];
+function ingestWorkbook(wb){
+  const qualifying = [];
+  for(const name of wb.SheetNames){
+    let rows = XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, defval:''});
+    const h = findHeaderRow(rows);
+    if(h >= 0) qualifying.push({name, rows, h});
+  }
+  if(!qualifying.length){
+    // no recognisable sheet — fall back to manual mapping on the first sheet
+    ingestRows(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, defval:''}));
+    return;
+  }
+  if(qualifying.length === 1){ buildFromSheets(qualifying); return; }
+  // multiple company sheets — let this device pick which to cover
+  pendingSheets = qualifying;
+  $('coyPicks').innerHTML = qualifying.map((q,i)=>
+    `<label style="display:flex;align-items:center;gap:10px;font-size:16px;padding:10px;border:1px solid var(--line);border-radius:6px">
+      <input type="checkbox" value="${i}" checked style="width:22px;height:22px"> <b>${esc(q.name)}</b></label>`).join('');
+  $('coyPickCard').style.display='block';
+  $('coyPickCard').scrollIntoView({behavior:'smooth'});
+}
+$('coyLoadBtn').onclick = ()=>{
+  const picked = [...document.querySelectorAll('#coyPicks input:checked')].map(cb=>pendingSheets[+cb.value]);
+  if(!picked.length){ flash('Select at least one company.', false); return; }
+  buildFromSheets(picked);
+  $('coyPickCard').style.display='none';
+};
+function buildFromSheets(qualifying){
+  const words = $('exclWords').value.split(',').map(w=>w.trim().toLowerCase()).filter(Boolean);
+  roster = [];
+  const summary = [];
+  let id = 0;
+  for(const sh of qualifying){
+    const head = sh.rows[sh.h].map(c=>String(c).trim());
+    const col = re => head.findIndex(c=>re.test(c));
+    const cRank = col(/^rank$/i), cName = col(/^name$/i),
+          cAppt = col(/appoint|position/i),
+          cRem = col(/remark/i), cNric = col(/nric|^ic$/i);
+    let cDD = col(/disrupt|defer|status/i);
+    if(cDD < 0){
+      // some sheets have the Disrupting/Deferring formula column without a header — find it by its values
+      for(let i = sh.h+1; i < Math.min(sh.rows.length, sh.h+120) && cDD < 0; i++){
+        const r = sh.rows[i];
+        for(let c = 0; c < r.length; c++){
+          if(/^(disrupting|deferring)$/i.test(String(r[c]).trim())){ cDD = c; break; }
+        }
+      }
+    }
+    let added = 0, empty = 0;
+    for(let i = sh.h+1; i < sh.rows.length; i++){
+      const r = sh.rows[i];
+      const name = String(r[cName]??'').trim();
+      const rank = cRank>=0 ? String(r[cRank]??'').trim() : '';
+      if(!name){ if(++empty > 300) break; continue; }
+      empty = 0;
+      if(name.toUpperCase()==='NAME') continue;              // repeated header
+      if(rank.length > 6) continue;                          // stray text in rank column
+      const dd  = cDD>=0  ? String(r[cDD]??'').trim()  : '';
+      const rem = cRem>=0 ? String(r[cRem]??'').trim() : '';
+      const statusRaw = [dd, rem].filter(Boolean).join(' · ');
+      const excluded = words.some(w=> statusRaw.toLowerCase().includes(w));
+      roster.push({ id:id++, rank, name, nric: cNric>=0 ? String(r[cNric]??'').trim() : '',
+        coy: sh.name, appt: cAppt>=0 ? String(r[cAppt]??'').trim() : '',
+        statusRaw, excluded, present:false, time:null, walkIn:false });
+      added++;
+    }
+    summary.push(sh.name+': '+added);
+  }
+  if(!roster.length){ flash('Recognised the template but found no personnel rows.', false); return; }
+  enableTabs();
+  refreshAll();
+  showView('checkin');
+  $('search').focus();
+  const exc = roster.filter(p=>p.excluded).length;
+  flash('Template detected ✓ '+roster.length+' pax loaded ('+summary.join(', ')+') · '+exc+' excused', true);
+}
+
+// ---------------- Column mapping ----------------
+const FIELDS = [
+  {key:'name',  label:'Name',    req:true,  guess:/name/i},
+  {key:'nric',  label:'NRIC',    req:false, guess:/nric|ic\b|id/i},
+  {key:'rank',  label:'Rank',    req:false, guess:/rank/i},
+  {key:'appt',  label:'Appointment', req:false, guess:/appoint|position/i},
+  {key:'coy',   label:'Company', req:false, guess:/coy|company|sub.?unit|platoon/i},
+  {key:'status',label:'Status',  req:false, guess:/status|remark|defer|disrupt/i},
+];
+function buildMapper(){
+  $('mapRows').innerHTML = FIELDS.map(f=>{
+    const opts = ['<option value="">— not in my file —</option>']
+      .concat(headers.map((h,i)=>`<option value="${i}">${esc(h)}</option>`)).join('');
+    return `<div class="maprow">
+      <label>${f.label} <span class="pill ${f.req?'req':'opt'}">${f.req?'required':'optional'}</span></label>
+      <select id="map_${f.key}">${opts}</select>
+    </div>`;
+  }).join('');
+  // auto-guess
+  FIELDS.forEach(f=>{
+    const i = headers.findIndex(h=>f.guess.test(h));
+    if(i>=0) $('map_'+f.key).value = i;
+  });
+}
+
+$('buildBtn').onclick = ()=>{
+  const map = {};
+  for(const f of FIELDS){
+    const v = $('map_'+f.key).value;
+    if(v==='' && f.req){ flash('Please select the '+f.label+' column.', false); return; }
+    map[f.key] = v===''? null : +v;
+  }
+  const words = $('exclWords').value.split(',').map(w=>w.trim().toLowerCase()).filter(Boolean);
+  roster = rawRows.map((r,idx)=>{
+    const g = k => map[k]===null ? '' : String(r[map[k]]??'').trim();
+    const statusRaw = g('status');
+    const sLow = statusRaw.toLowerCase();
+    const excluded = words.some(w=> sLow.includes(w));
+    return { id:idx, rank:g('rank'), name:g('name'), nric:g('nric'), coy:g('coy')||'—',
+             appt:g('appt'), statusRaw, excluded, present:false, time:null, walkIn:false };
+  }).filter(p=>p.name);
+  enableTabs();
+  refreshAll();
+  showView('checkin');
+  $('search').focus();
+  flash(roster.length+' personnel loaded — ready to check in', true);
+};
+
+// ---------------- Views ----------------
+function enableTabs(){ document.querySelectorAll('.tabs button').forEach(b=>b.disabled=false); }
+document.querySelectorAll('.tabs button').forEach(b=>{
+  b.onclick = ()=>{ if(!b.disabled) showView(b.dataset.view); };
+});
+function showView(v){
+  document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('active', x.dataset.view===v));
+  $('view-'+v).classList.add('active');
+  if(v==='checkin') setTimeout(()=>$('search').focus(), 50);
+  if(v==='dashboard') paintDashboard();
+  if(v==='outstanding') paintOutstanding();
+  if(v==='roll') paintRoll();
+}
+
+// ---------------- Stats strip ----------------
+function refreshStrip(){
+  const inc = roster.filter(p=>!p.excluded);
+  $('sExpected').textContent = inc.length;
+  $('sPresent').textContent  = inc.filter(p=>p.present).length;
+  $('sOut').textContent      = inc.filter(p=>!p.present).length;
+  $('sExcluded').textContent = roster.filter(p=>p.excluded).length;
+}
+function refreshAll(){
+  refreshStrip();
+  const coys = [...new Set(roster.map(p=>p.coy))].sort();
+  $('outCoy').innerHTML = '<option value="">All companies</option>' + coys.map(c=>`<option>${esc(c)}</option>`).join('');
+}
+
+// ---------------- Search & check-in ----------------
+$('search').addEventListener('input', paintResults);
+$('search').addEventListener('keydown', e=>{
+  if(e.key==='Enter'){
+    const first = document.querySelector('.results .checkbtn');
+    if(first) first.click();
+  }
+});
+function matches(p, q){
+  if(!q) return false;
+  const qU = q.toUpperCase();
+  if(last4(p.nric) === qU) return 3;                       // exact last-4
+  if(String(p.nric).toUpperCase().includes(qU)) return 2;  // partial nric
+  if(p.name.toUpperCase().includes(qU)) return 1;          // name
+  return 0;
+}
+function paintResults(){
+  const q = $('search').value.trim();
+  const box = $('results');
+  if(q.length < 2){ box.innerHTML = q ? '<p class="muted">Keep typing…</p>' : ''; return; }
+  const hits = roster.map(p=>({p, s:matches(p,q)})).filter(x=>x.s>0)
+    .sort((a,b)=> b.s-a.s || a.p.name.localeCompare(b.p.name)).slice(0,8);
+  if(!hits.length){ box.innerHTML = '<p class="muted">No match on the roll. Check spelling, or add as walk-in below.</p>'; return; }
+  box.innerHTML = hits.map(({p})=>{
+    const badge = p.excluded ? `<span class="status ex">Excused: ${esc(p.statusRaw)||'—'}</span>`
+      : p.present ? `<span class="status in">✓ In · ${p.time}</span>`
+      : `<span class="status out">Outstanding</span>`;
+    const action = p.present
+      ? `<button class="undobtn" onclick="undoCheckin(${p.id})">Undo</button>`
+      : `<button class="checkbtn" onclick="checkin(${p.id})">Check in</button>`;
+    return `<div class="person">
+      <div class="who">
+        <div class="nm">${esc(p.rank)} ${esc(p.name)}</div>
+        <div class="meta">${p.nric ? esc(maskNric(p.nric))+' · ' : ''}${esc(p.coy)}${p.appt ? ' · '+esc(p.appt) : ''} ${badge}</div>
+      </div>${action}</div>`;
+  }).join('');
+}
+function maskNric(n){
+  const s = String(n||'');
+  return s.length > 4 ? s[0] + '••••' + s.slice(-4) : s;
+}
+function checkin(id){
+  const p = roster.find(x=>x.id===id); if(!p) return;
+  if(p.excluded && !confirm(p.name+' is marked "'+p.statusRaw+'". Check in anyway?')) return;
+  if(p.excluded) p.excluded = false; // physically present overrides excusal
+  p.present = true;
+  p.time = new Date().toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit',hour12:false});
+  refreshStrip();
+  flash('✓ '+p.rank+' '+p.name+' — '+p.time, true);
+  $('search').value=''; $('results').innerHTML=''; $('search').focus();
+}
+function undoCheckin(id){
+  const p = roster.find(x=>x.id===id); if(!p) return;
+  p.present=false; p.time=null;
+  refreshStrip(); paintResults();
+  flash('Undone: '+p.name);
+}
+
+// ---------------- Walk-in ----------------
+$('walkBtn').onclick = ()=>{
+  const name = $('wName').value.trim();
+  if(!name){ flash('Walk-in needs at least a name.', false); return; }
+  const p = { id: roster.length ? Math.max(...roster.map(x=>x.id))+1 : 0,
+    rank:$('wRank').value.trim(), name, nric:$('wNric').value.trim(),
+    coy:$('wCoy').value.trim()||'—', statusRaw:'WALK-IN', excluded:false,
+    present:true, time:new Date().toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit',hour12:false}),
+    walkIn:true };
+  roster.push(p);
+  ['wRank','wName','wNric','wCoy'].forEach(i=>$(i).value='');
+  refreshAll(); refreshStrip();
+  flash('✓ Walk-in added: '+name, true);
+};
+
+// ---------------- Dashboard ----------------
+function paintDashboard(){
+  const inc = roster.filter(p=>!p.excluded);
+  const coys = [...new Set(inc.map(p=>p.coy))].sort();
+  let cHtml = '<table><tr><th>Company</th><th class="num">Expected</th><th class="num">Present</th><th class="num">Outstanding</th><th>Progress</th></tr>';
+  for(const c of coys){
+    const g = inc.filter(p=>p.coy===c);
+    const pr = g.filter(p=>p.present).length;
+    const pct = g.length?Math.round(pr/g.length*100):0;
+    cHtml += `<tr class="${pr===g.length?'done':''}"><td>${esc(c)}</td><td class="num">${g.length}</td><td class="num">${pr}</td>
+      <td class="num">${g.length-pr}</td><td><div class="bar"><i style="width:${pct}%"></i></div></td></tr>`;
+  }
+  const totP = inc.filter(p=>p.present).length;
+  cHtml += `<tr><td><b>Total</b></td><td class="num"><b>${inc.length}</b></td><td class="num"><b>${totP}</b></td><td class="num"><b>${inc.length-totP}</b></td>
+    <td><div class="bar"><i style="width:${inc.length?Math.round(totP/inc.length*100):0}%"></i></div></td></tr>`;
+  $('coyTable').innerHTML = cHtml + '</table>';
+}
+
+// ---------------- Outstanding ----------------
+$('outCoy').onchange = paintOutstanding;
+function paintOutstanding(){
+  const coy = $('outCoy').value;
+  let list = roster.filter(p=>!p.excluded && !p.present);
+  if(coy) list = list.filter(p=>p.coy===coy);
+  list.sort((a,c)=> a.coy.localeCompare(c.coy) || a.name.localeCompare(c.name));
+  $('outTitle').textContent = 'Outstanding — '+list.length+' pax'+(coy?' · '+coy:'');
+  $('outTable').innerHTML = list.length
+    ? '<table><tr><th>Rank</th><th>Name</th><th>Appointment</th><th>Coy</th></tr>'+
+      list.map(p=>`<tr><td>${esc(p.rank)}</td><td><b>${esc(p.name)}</b></td><td>${esc(p.appt)||'—'}</td><td>${esc(p.coy)}</td></tr>`).join('')+'</table>'
+    : '<p class="muted">No one outstanding — full strength. 🎉</p>';
+}
+
+// ---------------- Full roll ----------------
+$('rollSearch').oninput = paintRoll;
+$('rollFilter').onchange = paintRoll;
+function paintRoll(){
+  const q = $('rollSearch').value.trim().toUpperCase();
+  const f = $('rollFilter').value;
+  let list = roster.slice();
+  if(f==='present') list = list.filter(p=>p.present);
+  if(f==='outstanding') list = list.filter(p=>!p.present && !p.excluded);
+  if(f==='excluded') list = list.filter(p=>p.excluded);
+  if(q) list = list.filter(p=> p.name.toUpperCase().includes(q) || String(p.nric).toUpperCase().includes(q));
+  list.sort((a,c)=> a.coy.localeCompare(c.coy) || a.name.localeCompare(c.name));
+  $('rollTable').innerHTML = '<table><tr><th>Rank</th><th>Name</th><th>Appointment</th><th>Coy</th><th>Status</th><th>Checked in</th><th class="no-print"></th></tr>'+
+    list.map(p=>{
+      const st = p.excluded ? `<span class="status ex">${esc(p.statusRaw)||'Excused'}</span>`
+        : p.present ? '<span class="status in">Present</span>' : '<span class="status out">Outstanding</span>';
+      const when = p.present ? `${p.time}${p.walkIn?' · walk-in':''}` : '—';
+      const act = p.present ? `<button class="undobtn" onclick="undoCheckin(${p.id});paintRoll()">Undo</button>` : '';
+      return `<tr><td>${esc(p.rank)}</td><td><b>${esc(p.name)}</b></td><td>${esc(p.appt)||'—'}</td><td>${esc(p.coy)}</td><td>${st}</td><td>${when}</td><td class="no-print">${act}</td></tr>`;
+    }).join('')+'</table>' || '<p class="muted">Nothing to show.</p>';
+}
+
+// ---------------- Export & save ----------------
+function download(name, blob){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+}
+$('exportBtn').onclick = ()=>{
+  const rows = [['Rank','Name','Appointment','Company','NRIC','Original Status','Attendance','Check-in Time','Walk-in']];
+  roster.forEach(p=> rows.push([p.rank,p.name,p.appt||'',p.coy,p.nric||'',p.statusRaw,
+    p.excluded?'EXCUSED':(p.present?'PRESENT':'OUTSTANDING'), p.time||'', p.walkIn?'YES':'']));
+  const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
+  if(hasXLSX){
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'In-Pro');
+    XLSX.writeFile(wb, 'inpro-results-'+stamp+'.xlsx');
+  } else {
+    const csv = rows.map(r=>r.map(v=>{v=String(v??'');return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}).join(',')).join('\n');
+    download('inpro-results-'+stamp+'.csv', new Blob([csv],{type:'text/csv'}));
+  }
+  flash('Exported ✓', true);
+};
+$('saveBtn').onclick = ()=>{
+  const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
+  download('inpro-session-'+stamp+'.json', new Blob([JSON.stringify({v:1, roster})],{type:'application/json'}));
+  flash('Session saved — keep the .json safe', true);
+};
+$('resumeFile').addEventListener('change', e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=>{
+    try{
+      const data = JSON.parse(r.result);
+      if(!data.roster) throw new Error('not a session file');
+      roster = data.roster;
+      enableTabs(); refreshAll(); refreshStrip(); showView('checkin');
+      flash('Session restored — '+roster.length+' personnel', true);
+    }catch(err){ flash('Could not load that session file.', false); }
+  };
+  r.readAsText(f);
+});
+
+// ---------------- Merge company sessions (master device) ----------------
+$('mergeFile').addEventListener('change', async e=>{
+  const files = [...e.target.files]; if(!files.length) return;
+  if(!roster.length){ flash('Load the full battalion NR first, then merge company sessions into it.', false); return; }
+  const baseKey = p => (p.coy+'|'+p.name).toUpperCase().replace(/\s+/g,' ').trim();
+  const withOcc = list => { const c={}; return list.map(p=>{ const k=baseKey(p); c[k]=(c[k]||0)+1; return {p, k:k+'#'+c[k]}; }); };
+  const index = new Map(withOcc(roster).map(({p,k})=>[k,p]));
+  let updated=0, walkins=0, unmatched=[];
+  for(const f of files){
+    let data;
+    try{ data = JSON.parse(await f.text()); }catch{ flash('Skipped '+f.name+' — not a session file.', false); continue; }
+    if(!data.roster) continue;
+    for(const {p:inc, k} of withOcc(data.roster)){
+      if(!inc.present) continue;
+      const hit = index.get(k);
+      if(hit){
+        if(!hit.present){ hit.present=true; hit.time=inc.time; updated++; }
+        if(hit.excluded && inc.present) hit.excluded=false;
+      } else if(inc.walkIn){
+        inc.id = roster.length ? Math.max(...roster.map(x=>x.id))+1 : 0;
+        roster.push(inc); walkins++;
+      } else {
+        unmatched.push((inc.rank?inc.rank+' ':'')+inc.name+' ('+inc.coy+')');
+      }
+    }
+  }
+  e.target.value='';
+  refreshAll(); refreshStrip(); paintDashboard();
+  let msg = 'Merged ✓ '+updated+' check-ins'+(walkins?', '+walkins+' walk-ins':'');
+  if(unmatched.length) msg += ' · '+unmatched.length+' not matched to NR (check Full Roll manually): '+unmatched.slice(0,3).join(', ')+(unmatched.length>3?'…':'');
+  flash(msg, unmatched.length===0);
+});
+
+// Warn before closing with unsaved check-ins
+window.addEventListener('beforeunload', e=>{
+  if(roster.some(p=>p.present)){ e.preventDefault(); e.returnValue=''; }
+});
+</script>
+</body>
+</html>
